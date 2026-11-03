@@ -1,0 +1,14 @@
+name: NoFX
+version: '${version}'
+
+main: dev.nofx.NoFX
+api-version: '26.3'
+load: POSTWORLD
+
+permissions:
+  nofx.admin:
+    description: Admin access to NoFX commands and detections
+    default: op
+  nofx.bypass:
+    description: Bypasses Freecam scanning and through-wall protection
+    default: false

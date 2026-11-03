@@ -1,0 +1,290 @@
+# ============================================================================
+#  NoFX — защита сервера от Freecam-мода
+# ============================================================================
+#
+#  ПРОБЛЕМА
+#    Freecam (https://modrinth.com/mod/freecam) — чисто клиентский мод: камера
+#    игрока "отделяется" от тела и может пролетать сквозь блоки, светиться в
+#    стенах, заглядывать в базы и т.п. Мод НЕ отправляет серверу ни одного
+#    пакета, поэтому сервер НЕ может узнать о нём из обычного трафика.
+#
+#  РЕШЕНИЕ (клиентский мод + сервер, скан как резерв)
+#    1) MOD — необязательный клиентский мод NoFC (раздел mod ниже). Игроки
+#       с модом: сервер узнаёт о них по каналу nofc:main (hello/ping) и НЕ
+#       трогает их скан-табличками — мод сам ловит Freecam-камеру сквозь
+#       стены (камера отделена от глаз И внутри твёрдого блока) и шлёт серверу
+#       сигнал, тот применяет действие из mod.on-freecam.
+#       Fair Freecam разрешён: он не умеет летать сквозь блоки, поэтому камера
+#       никогда не оказывается внутри твёрдого блока.
+#    2) SCAN — для игроков БЕЗ мода работает легаси-скан через уязвимость
+#       редактирования табличек (раздел scan). Если клиент с модом — скан
+#       пропускается автоматически.
+#    3) THROUGH-WALL PROTECTION — если кто-то всё же взаимодействует блоками/
+#       сущностями с позиции камеры (Freecam + Allow Interaction), сервер видит
+#       клик из-за пределов досягаемости тела и блокирует/наказывает.
+#
+#  Весь плагин настраивается ИСКЛЮЧИТЕЛЬНО через этот файл.
+# ============================================================================
+#
+#  Версия конфига. При запуске плагин сравнивает её со своей версией: если
+#  файл устарел, старый config.yml сохраняется как config.yml.bak-<дата> и
+#  применяются настройки по умолчанию (новые зонды и параметры). Не менять
+#  вручную, если не понимаешь, зачем это нужно.
+config-version: 6
+
+# ============================================================================
+#  MOD — необязательный клиентский мод NoFC (Fabric).
+#  Мод НЕ обязателен: игроки без мода продолжают играть (их проверяет
+#  легаси-скан на табличках). Игрок с установленным модом по plugin-каналу
+#  nofc:main присылает:
+#    * hello   — подтверждение, что мод установлен (при входе);
+#    * ping    — heartbeat каждые 15 сек;
+#    * freecam — позицию камеры, если та оказалась ВНУТРИ твёрдого блока
+#                (мод обнаруживает Freecam-камеру сквозь стены).
+#  Для игроков с модом скан на табличках ПРОПУСКАЕТСЯ (мод сам ловит freecam),
+#  а на freecam-сигнал применяется действие из mod.on-freecam.
+#  Если require: true — сервер, наоборот, кикает игроков БЕЗ мода.
+# ============================================================================
+mod:
+  # Обязателен ли клиентский мод. false — мод необязателен (обычный режим):
+  # кики без мода и по heartbeat НЕ применяются, но hello/ping/freecam
+  # по-прежнему принимаются. true — игроков без мода кикает после grace-паузы,
+  # а при пропаже heartbeat — по таймауту.
+  require: false
+  # Сколько тиков ждать hello-подтверждение после входа (20 = 1 сек).
+  # Используется только при require: true.
+  grace-ticks: 100
+  # Таймаут heartbeat: если от мода нет ping дольше этого (тики, 20 = 1 сек),
+  # игрок кикается. Используется только при require: true.
+  heartbeat-timeout-ticks: 1200
+  # Сообщение при кике без мода (только при require: true).
+  kick-message: "<red>На этом сервере нужен клиентский мод NoFC. Установи его в свой клиент и зайди снова.</red>"
+  # Действие, если мод прислал сигнал о Freecam-камере сквозь стены:
+  # none | warn | kick
+  on-freecam:
+    action: kick
+    warn-message: "<red>Freecam сквозь стены запрещён.</red>"
+    kick-message: "<red>Freecam сквозь стены запрещён.</red>"
+    ban-reason: ""
+    ban-duration: ""
+    commands: []
+
+scan:
+  # Общий выключатель сканирования на Freecam.
+  # Скан на табличках проверяет игроков БЕЗ мода NoFC. Для игроков с модом
+  # скан автоматически пропускается (мод сам ловит freecam сквозь стены).
+  enabled: true
+
+  # Автоматическое сканирование при входе на сервер.
+  on-join:
+    enabled: true
+    # Задержка после входа (тики, 20 = 1 секунда). Нужно, чтобы игрок успел
+    # полностью заспавниться и клиент разобрал чанки вокруг него.
+    delay-ticks: 40
+    # Сканировать только при первом входе игрока на сервер.
+    first-join-only: false
+    # Кулдаун повторного авто-сканирования одного игрока (секунды).
+    cooldown-seconds: 1800
+
+  # Сколько ждать ответ клиента на табличку-зонд (тики) до того, как считать
+  # результат "защищённым" (клиент может блокировать пакеты/резолв ключей).
+  timeout-ticks: 100
+
+  # Дистанция установки таблички над/за игроком (1-5 блоков).
+  # Табличка ставится незаметно и убирается в тот же тик.
+  sign-distance: 3
+  invisible-close: true
+
+  # Куда ставить "фантомную" табличку-зонд:
+  #   behind — ЗА СПИНОЙ игрока (вне поля зрения). При возможности табличка
+  #            прячется внутри ближайшего твёрдого блока (стены/земли), чтобы
+  #            её не было видно даже при резком повороте. Рекомендуется.
+  #   above  — над головой игрока (как раньше, заметнее).
+  placement: behind
+
+  # Пауза между табличками-зондами при пакетном скане (тики, 20 = 1 сек).
+  # Нужна, т.к. одна табличка вмещает только 3 зонда, а зондов больше 3.
+  # Слишком малая пауза может ломать открытие редактора на клиенте.
+  between-sign-ticks: 5
+
+  # Ключи перевода, по которым определяется Freecam-мод.
+  # type: KEYBIND — бинд мода (key.<mod>.<name>); резолвится в описание/клавишу.
+  #        TRANSLATE — текстовая строка мода; резолвится в локализованный текст.
+  # fallback — строка-заглушка, которой НЕТ ни в одном клиенте (ванна покажет её
+  #            как есть => мода нет). Для KEYBIND fallback не нужен.
+  probes:
+    # Оригинальный Freecam (itsmattkc): умеет летать сквозь блоки.
+    # Ключ НАСТРОЕК КОЛЛИЗИЙ резолвится, только если у мода есть опция
+    # "Ignore All Collision". У разрешённого Fair Freecam его нет.
+    - key: "freecam.config.collision.ignoreAll.label"
+      type: TRANSLATE
+      fallback: "<NOFX_FREECAM_COLLISION>"
+    # Friendly Freecam: свои ключи autoconfig (не key.freecam.*, поэтому нет
+    # пересечения с Fair Freecam). "Ignore All Collision" — летает сквозь блоки.
+    - key: "text.autoconfig.freecam.option.collision.ignoreAll"
+      type: TRANSLATE
+      fallback: "<NOFX_FRIENDLY_COLLISION>"
+    # Friendly Freecam (дублирующий зонд): сообщение включения мода.
+    - key: "msg.freecam.enable"
+      type: TRANSLATE
+      fallback: "<NOFX_FRIENDLY_ENABLE>"
+    # Builders Freecam (умеет летать сквозь блоки)
+    - key: "key.buildersfreecam.toggle"
+      type: KEYBIND
+    # Builders Freecam (дублирующий зонд, на случай другой регистрации бинда)
+    - key: "buildersfreecam.msg.enabled"
+      type: TRANSLATE
+      fallback: "<NOFX_BUILDERS_ENABLED>"
+    # FPV Freecam (настраиваемые коллизии, может летать сквозь блоки)
+    - key: "key.fpvfreecam.open_setup"
+      type: KEYBIND
+    # Easy Freecam (всегда без коллизий)
+    - key: "key.easy-freecam.toggle_freecam"
+      type: KEYBIND
+    # Freecam (Yannis_) / XCam (умеет летать сквозь блоки)
+    - key: "key.xcam.toggle"
+      type: KEYBIND
+    # Smooth FreeCam (всегда без коллизий)
+    - key: "key.smooth_freecam.toggle"
+      type: KEYBIND
+    # Spectator Freecam (переводит клиент в режим спектатора)
+    - key: "key.freecam.toggle_freecam"
+      type: KEYBIND
+    # Freecam by hashalite (CurseForge, 13M+ скачиваний, F4 по умолч.)
+    - key: "key.freecam.toggle"
+      type: KEYBIND
+    # FreeCam by Zergatul (CurseForge, Forge/Fabric/NeoForge, F6 по умолч.)
+    - key: "key.zergatul.freecam.toggle"
+      type: KEYBIND
+    # WI Freecam (Wurst-Imperium, CurseForge, U по умолч.)
+    - key: "key.wi_freecam.toggle_freecam"
+      type: KEYBIND
+    # noclip (Andante/dvitski, CurseForge, backtick по умолч.)
+    - key: "key.noclip.toggle"
+      type: KEYBIND
+    # hashalite Freecam: настройка "Ignore All Collision" (autoconfig)
+    - key: "text.autoconfig.free-cam.option.collision.ignoreAll"
+      type: TRANSLATE
+      fallback: "<NOFX_FREECAM_COLLISION>"
+
+  # Контрольная строка (4-я строка таблички). key.forward есть у ВСЕХ клиентов.
+  # Если клиент вернул её неразрезолвленной — он блокирует уязвимость
+  # (ModDetectionPreventer и подобные), результат помечается как PROTECTED,
+  # чтобы не было ложных "чистых" вердиктов.
+  control-keybind: "key.forward"
+
+# Защита от взаимодействия "сквозь стены" (клик из позиции камеры Freecam,
+# когда включён Allow Interaction). Блокирует клики, приходящие с расстояния
+# больше досягаемости руки.
+through-wall:
+  enabled: true
+  # Дополнительная проверка для БЛОКОВ без таблички: если грань блока, которую
+  # кликает игрок, геометрически не может быть видна из его настоящего глаза
+  # (камера freecam смещена за стену), клик считается нарушением. Ловит ломание/
+  # использование/размещение сквозь твёрдые блоки в пределах досягаемости.
+  face-check: true
+  # Запас поверх ванильной дистанции взаимодействия (атрибут игрока
+  # PLAYER_BLOCK_INTERACTION_RANGE, обычно 4.5 блока). Итоговый лимит =
+  # значение атрибута + этот буфер. Буфер компенсирует лаг/пинг.
+  reach-tolerance: 2.0
+  # Сколько нарушений за период violation-decay-seconds нужно, чтобы сработало
+  # действие. Одиночный ложный клик не накажет.
+  violations-before-action: 3
+  # Период "памяти" нарушений (секунды).
+  violation-decay-seconds: 10
+  # Ограничение проверок на игрока в секунду (защита от спама пакетами).
+  checks-per-second: 20
+  # Действие после накопления нарушений: none | warn | kick
+  action: warn
+  warn-message: "<red>Не взаимодействуй с блоками/сущностями сквозь стены.</red>"
+  kick-message: "<red>Взаимодействие сквозь стены запрещено.</red>"
+  ban-reason: ""
+  ban-duration: ""
+  # Команды консоли при срабатывании (%player% заменяется на имя игрока).
+  commands: []
+
+enforcement:
+  # Действия после скана, если Freecam ОБНАРУЖЕН: none | warn | kick
+  on-detect:
+    action: kick
+    warn-message: "<red>На этом сервере запрещён Freecam. Убери его.</red>"
+    kick-message: "<red>На этом сервере запрещён Freecam.</red>"
+    ban-reason: ""
+    ban-duration: ""
+    # Команды консоли (%player%).
+    commands: []
+
+  # Повторные детекты (счётчик хранится в plugins/NoFX/tracking.yml и
+  # переживает рестарты). Эскалация: при детектах >= repeat-after-detects
+  # применяется это действие вместо on-detect.
+  repeat-after-detects: 2
+  on-repeat-detect:
+    action: kick
+    warn-message: "<red>Повторное использование Freecam запрещено.</red>"
+    kick-message: "<red>Повторное использование Freecam запрещено.</red>"
+    ban-reason: ""
+    ban-duration: ""
+    commands: []
+
+  # Действие, если клиент блокирует проверку (PROTECTED).
+  on-protected:
+    action: warn
+    warn-message: "<yellow>Твой клиент блокирует проверку модов. Отключи такие моды или будешь удалён.</yellow>"
+    kick-message: "<red>Твой клиент блокирует проверку модов.</red>"
+    ban-reason: ""
+    ban-duration: ""
+    commands: []
+
+  # Эскалация для PROTECTED: при срабатываниях >= repeat-after-protected.
+  repeat-after-protected: 3
+  on-repeat-protected:
+    action: kick
+    warn-message: "<red>Твой клиент постоянно блокирует проверку модов.</red>"
+    kick-message: "<red>Твой клиент постоянно блокирует проверку модов.</red>"
+    ban-reason: ""
+    ban-duration: ""
+    commands: []
+
+  # ЛОКДАУН: если клиент блокирует проверку (PROTECTED) — полностью запретить
+  # этому игроку взаимодействие с миром (копать/ставить/кликать/атаковать/лить
+  # вёдра) до тех пор, пока проверка не станет чистой или админ не снимет
+  # блокировку (/nofx unlock <игрок>). Страховка от неопределяемых клиентов:
+  # их камера больше ничего не может сделать, даже если ключи не резолвятся.
+  # Осторожно: неотключаемые игроки будут заперты до вмешательства админа.
+  lockdown-on-protected: false
+
+  # Слать оповещения в консоль и игрокам с правом notify-permission.
+  # Отключено: вся информация доступна только через /nofx offenders.
+  notify-staff: false
+  # Кому отправлять оповещения о детекте/защите (только админам).
+  # Не используется: оповещения отключены, смотри notify-staff.
+  notify-permission: "nofx.admin"
+  # Кулдаун повторных оповещений об одном и том же игроке (секунды), чтобы
+  # не спамить чат/консоль. Лог всегда пишется в plugins/NoFX/nofx-detections.log.
+  notify-cooldown-seconds: 30
+
+messages:
+  prefix: "<gray>[<gold>NoFX</gold>]</gray> "
+  no-permission: "<red>Недостаточно прав.</red>"
+  player-offline: "<red>Игрок оффлайн.</red>"
+  usage: "<yellow>Использование: /nofx reload | /nofx check [игрок|all] | /nofx status [игрок] | /nofx offenders | /nofx unlock <игрок> | /nofx forget <игрок></yellow>"
+  scan-running: "<yellow>%player% уже сканируется.</yellow>"
+  scan-bypass: "<yellow>%player% имеет право nofx.bypass.</yellow>"
+  scan-skip-inventory: "<yellow>%player% сейчас в инвентаре — скан пропущен (невидимость сохраняется).</yellow>"
+  scan-skip-mod: "<green>%player% имеет мод NoFC — скан не нужен.</green>"
+  scan-started: "<gold>Сканирование %player% на Freecam...</gold>"
+  scan-result-clean: "<green>%player%: Freecam не обнаружен.</green>"
+  scan-result-detected: "<red>%player%: Freecam ОБНАРУЖЕН (%probes%).</red>"
+  scan-result-protected: "<yellow>%player%: клиент блокирует проверку (PROTECTED).</yellow>"
+  staff-detect: ""
+  staff-mod-freecam: ""
+  staff-protected: ""
+  staff-through-wall: ""
+  status-scanning: "<green>%player%: сканирование идёт = %status%.</green>"
+  status-count: "<green>Сканируется игроков: %count%.</green>"
+  reloaded: "<green>Конфиг NoFX перезагружен.</green>"
+  lockdown-blocked: "<red>Взаимодействие приостановлено: твой клиент блокирует проверку модов. Обратись к админу.</red>"
+  offenders-empty: "<green>В списке нарушителей никого нет.</green>"
+  offenders-line: "<gray>%name% — детекты: %detects%, защиты: %protected%, последний раз: %last%</gray>"
+  unlocked: "<green>%player%: блокировка снята, статус очищен.</green>"
+  forgot: "<green>%player%: запись о трекинге стёрта.</green>"
